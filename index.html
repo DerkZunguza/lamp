@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Lâmpada do Quarto — Bluetooth</title>
+<meta name="description" content="Controle da lâmpada do quarto via Bluetooth Low Energy com ESP32">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg-dark: #0a0e14;
+    --bg-card: rgba(18, 24, 33, 0.85);
+    --border-card: rgba(255, 255, 255, 0.06);
+    --text-primary: #e8eaed;
+    --text-secondary: #8b95a5;
+    --text-muted: #555d6b;
+    --accent-gold: #ffb800;
+    --accent-gold-dim: #7a5900;
+    --glow-gold: rgba(255, 184, 0, 0.35);
+    --glow-gold-strong: rgba(255, 184, 0, 0.6);
+    --btn-off-bg: #1a1f28;
+    --btn-off-border: rgba(255, 255, 255, 0.08);
+    --success: #34d399;
+    --error: #f87171;
+  }
+  body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-dark);
+    font-family: 'Inter', -apple-system, 'Segoe UI', Roboto, sans-serif;
+    color: var(--text-primary);
+    overflow: hidden;
+    position: relative;
+  }
+  /* ── Ambient background ── */
+  body::before {
+    content: '';
+    position: fixed;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background:
+      radial-gradient(ellipse at 20% 50%, rgba(255, 184, 0, 0.03) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 20%, rgba(99, 102, 241, 0.04) 0%, transparent 50%),
+      radial-gradient(ellipse at 50% 80%, rgba(139, 92, 246, 0.03) 0%, transparent 50%);
+    animation: ambientDrift 20s ease-in-out infinite alternate;
+    pointer-events: none;
+    z-index: 0;
+  }
+  @keyframes ambientDrift {
+    0%   { transform: translate(0, 0) rotate(0deg); }
+    100% { transform: translate(-3%, 2%) rotate(3deg); }
+  }
+  /* ── Lamp glow effect when ON ── */
+  .lamp-glow {
+    position: fixed;
+    top: -20%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 600px;
+    height: 600px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--glow-gold) 0%, transparent 70%);
+    opacity: 0;
+    transition: opacity 0.8s ease;
+    pointer-events: none;
+    z-index: 0;
+  }
+  body.lamp-on .lamp-glow {
+    opacity: 1;
+  }
+  /* ── Card ── */
+  .card {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    padding: 48px 36px 40px;
+    width: 92%;
+    max-width: 380px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-card);
+    border-radius: 28px;
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    box-shadow:
+      0 4px 24px rgba(0, 0, 0, 0.4),
+      0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+    transition: box-shadow 0.6s ease;
+  }
+  body.lamp-on .card {
+    box-shadow:
+      0 4px 24px rgba(0, 0, 0, 0.4),
+      0 0 80px -20px var(--glow-gold),
+      0 0 0 1px rgba(255, 184, 0, 0.08) inset;
+  }
+  /* ── Title ── */
+  .title {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+  .subtitle {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-bottom: 36px;
+    letter-spacing: 0.3px;
+  }
+  /* ── Lamp icon ── */
+  .lamp-icon {
+    font-size: 2.2rem;
+    margin-bottom: 4px;
+    display: block;
+    filter: grayscale(1) brightness(0.5);
+    transition: filter 0.5s ease, transform 0.3s ease;
+  }
+  body.lamp-on .lamp-icon {
+    filter: grayscale(0) brightness(1);
+    transform: scale(1.05);
+  }
+  /* ── Toggle button ── */
+  .toggle-container {
+    position: relative;
+    display: inline-block;
+    margin-bottom: 28px;
+  }
+  .toggle-ring {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 200px;
+    height: 200px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    transition: border-color 0.5s ease, box-shadow 0.5s ease;
+    pointer-events: none;
+  }
+  body.lamp-on .toggle-ring {
+    border-color: rgba(255, 184, 0, 0.15);
+    box-shadow: 0 0 30px -5px var(--glow-gold);
+  }
+  .btn {
+    position: relative;
+    width: 170px;
+    height: 170px;
+    border-radius: 50%;
+    border: 2px solid var(--btn-off-border);
+    font-family: 'Inter', sans-serif;
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    background: var(--btn-off-bg);
+    color: var(--text-muted);
+    outline: none;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+  .btn:active:not(:disabled) {
+    transform: scale(0.94);
+  }
+  .btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    transform: none;
+  }
+  .btn.on {
+    background: radial-gradient(circle at 35% 35%, #ffe88a, #ffb800 60%, #e09800);
+    color: #3d2800;
+    border-color: rgba(255, 184, 0, 0.4);
+    box-shadow:
+      0 0 50px 8px var(--glow-gold),
+      0 0 15px 2px var(--glow-gold-strong) inset;
+  }
+  .btn.on:hover:not(:disabled) {
+    box-shadow:
+      0 0 70px 15px var(--glow-gold),
+      0 0 20px 4px var(--glow-gold-strong) inset;
+  }
+  .btn.off:hover:not(:disabled) {
+    border-color: rgba(255, 255, 255, 0.15);
+    background: #1f2630;
+  }
+  /* ── Pulse animation when ON ── */
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 50px 8px var(--glow-gold), 0 0 15px 2px var(--glow-gold-strong) inset; }
+    50%      { box-shadow: 0 0 60px 12px var(--glow-gold), 0 0 18px 3px var(--glow-gold-strong) inset; }
+  }
+  .btn.on {
+    animation: pulse 3s ease-in-out infinite;
+  }
+  .btn.on:hover {
+    animation: none;
+  }
+  /* ── Status ── */
+  .status-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 24px;
+    margin-bottom: 8px;
+  }
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    transition: background 0.3s ease;
+    flex-shrink: 0;
+  }
+  .status-dot.connected {
+    background: var(--success);
+    box-shadow: 0 0 8px rgba(52, 211, 153, 0.5);
+  }
+  .status-dot.error {
+    background: var(--error);
+    box-shadow: 0 0 8px rgba(248, 113, 113, 0.5);
+  }
+  .status-text {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    transition: color 0.3s ease;
+  }
+  .status-text.connected {
+    color: var(--success);
+  }
+  .status-text.error {
+    color: var(--error);
+  }
+  /* ── Connect button ── */
+  .connect-btn {
+    margin-top: 20px;
+    padding: 13px 28px;
+    border-radius: 50px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+    font-family: 'Inter', sans-serif;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    outline: none;
+    -webkit-tap-highlight-color: transparent;
+    letter-spacing: 0.3px;
+  }
+  .connect-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.18);
+    color: var(--text-primary);
+  }
+  .connect-btn:active {
+    transform: scale(0.97);
+  }
+  .connect-btn.connected {
+    border-color: rgba(52, 211, 153, 0.3);
+    color: var(--success);
+    background: rgba(52, 211, 153, 0.06);
+  }
+  .connect-btn.connected:hover {
+    background: rgba(52, 211, 153, 0.1);
+  }
+  /* ── Footer ── */
+  .footer {
+    margin-top: 28px;
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    opacity: 0.5;
+    letter-spacing: 0.5px;
+  }
+  /* ── Animations ── */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .card {
+    animation: fadeIn 0.6s ease-out;
+  }
+  /* ── Responsive ── */
+  @media (max-height: 600px) {
+    .card { padding: 28px 24px 24px; }
+    .btn { width: 140px; height: 140px; font-size: 0.85rem; }
+    .toggle-ring { width: 164px; height: 164px; }
+  }
+</style>
+</head>
+<body>
+  <div class="lamp-glow"></div>
+  <div class="card">
+    <span class="lamp-icon">💡</span>
+    <h1 class="title">Lâmpada do Quarto</h1>
+    <p class="subtitle">Controle via Bluetooth</p>
+    <div class="toggle-container">
+      <div class="toggle-ring"></div>
+      <button id="toggleBtn" class="btn off" disabled>· · ·</button>
+    </div>
+    <div class="status-container">
+      <span class="status-dot" id="statusDot"></span>
+      <span class="status-text" id="statusText">Desconectado</span>
+    </div>
+    <button id="connectBtn" class="connect-btn">
+      <span id="connectIcon">⚡</span> Conectar Bluetooth
+    </button>
+    <div class="footer">ESP32 • BLE </div>
+  </div>
+<script>
+// ── BLE Configuration (deve coincidir com o código do ESP32) ──
+const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+const CHAR_UUID    = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+const DEVICE_NAME  = 'Lampada-ESP32';
+// ── DOM Elements ──
+const toggleBtn  = document.getElementById('toggleBtn');
+const connectBtn = document.getElementById('connectBtn');
+const connectIcon = document.getElementById('connectIcon');
+const statusText = document.getElementById('statusText');
+const statusDot  = document.getElementById('statusDot');
+// ── State ──
+let characteristic = null;
+let lampState = false;
+// ── Event Listeners ──
+connectBtn.addEventListener('click', connect);
+toggleBtn.addEventListener('click', sendToggle);
+// ── Haptic feedback (mobile) ──
+function vibrate(ms = 15) {
+  if (navigator.vibrate) navigator.vibrate(ms);
+}
+// ── Connect to ESP32 ──
+async function connect() {
+  if (!navigator.bluetooth) {
+    setStatus('Este navegador não suporta Web Bluetooth.', 'error');
+    setStatus2('Usa Chrome ou Edge no PC/Android.');
+    return;
+  }
+  try {
+    setStatus('A procurar dispositivo...', 'searching');
+    connectBtn.disabled = true;
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ name: DEVICE_NAME }],
+      optionalServices: [SERVICE_UUID]
+    });
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+    setStatus('A conectar...', 'searching');
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    characteristic = await service.getCharacteristic(CHAR_UUID);
+    // Enable notifications
+    await characteristic.startNotifications();
+    characteristic.addEventListener('characteristicvaluechanged', handleNotify);
+    // Read initial state
+    const value = await characteristic.readValue();
+    updateUI(new TextDecoder().decode(value) === '1');
+    // Update UI
+    toggleBtn.disabled = false;
+    connectBtn.classList.add('connected');
+    connectIcon.textContent = '✓';
+    connectBtn.innerHTML = '<span id="connectIcon">✓</span> Conectado';
+    setStatus('Conectado à lâmpada', 'connected');
+    vibrate(30);
+  } catch (err) {
+    if (err.name === 'NotFoundError') {
+      setStatus('Nenhum dispositivo encontrado', 'error');
+    } else if (err.name === 'SecurityError') {
+      setStatus('Bluetooth bloqueado pelo navegador', 'error');
+    } else {
+      setStatus('Erro: ' + err.message, 'error');
+    }
+    connectBtn.disabled = false;
+  }
+}
+// ── Disconnection handler ──
+function onDisconnected() {
+  characteristic = null;
+  toggleBtn.disabled = true;
+  toggleBtn.className = 'btn off';
+  toggleBtn.textContent = '· · ·';
+  document.body.classList.remove('lamp-on');
+  connectBtn.classList.remove('connected');
+  connectBtn.innerHTML = '<span id="connectIcon">⚡</span> Reconectar';
+  connectBtn.disabled = false;
+  setStatus('Desconectado', 'disconnected');
+  vibrate([20, 50, 20]);
+}
+// ── Handle BLE notification (state change from ESP32) ──
+function handleNotify(event) {
+  const value = new TextDecoder().decode(event.target.value);
+  updateUI(value === '1');
+}
+// ── Send toggle command ──
+async function sendToggle() {
+  if (!characteristic) return;
+  vibrate();
+  // Instant visual feedback
+  toggleBtn.style.transform = 'scale(0.92)';
+  setTimeout(() => { toggleBtn.style.transform = ''; }, 150);
+  try {
+    const encoder = new TextEncoder();
+    await characteristic.writeValue(encoder.encode('t'));
+  } catch (err) {
+    setStatus('Erro ao enviar: ' + err.message, 'error');
+  }
+}
+// ── Update UI state ──
+function updateUI(state) {
+  lampState = state;
+  toggleBtn.className = state ? 'btn on' : 'btn off';
+  toggleBtn.textContent = state ? 'LIGADA' : 'DESLIGADA';
+  if (state) {
+    document.body.classList.add('lamp-on');
+  } else {
+    document.body.classList.remove('lamp-on');
+  }
+}
+// ── Status helpers ──
+function setStatus(text, type = '') {
+  statusText.textContent = text;
+  statusText.className = 'status-text' + (type ? ' ' + type : '');
+  statusDot.className = 'status-dot' + (type ? ' ' + type : '');
+}
+</script>
+</body>
+</html>
